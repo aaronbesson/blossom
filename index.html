@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Balloon Cherry Blossom Game</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: url('bg.jpg') no-repeat center center fixed;
+      background-size: cover;
+      touch-action: manipulation;
+      transition: background-position 0.1s ease-out;
+    }
+    canvas { display: block; }
+    #playMusic {
+      position: fixed;
+      bottom: 20px;
+      right: 20px; 
+      z-index: 100;
+      padding: 10px 15px;
+      background-color: rgba(255, 255, 255, 0.7);
+      border: none;
+      border-radius: 20px;
+      cursor: pointer;
+      font-family: Arial;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+      transition: all 0.3s ease;
+    }
+    #playMusic:hover {
+      background-color: rgba(255, 255, 255, 0.9);
+    }
+  </style>
+</head>
+<body>
+  <!-- Play button for rain sound -->
+  <button id="playMusic">
+    Sound
+  </button>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script>
+    // Game variables
+    let scene, camera, renderer;
+    let balloon;
+    let balloonString;
+    let balloonVelocity = 0;
+    let balloonXVelocity = 0; // Horizontal velocity
+    let balloonZVelocity = 0; // Z-axis velocity for depth
+    let blossoms = [];
+    const clock = new THREE.Clock();
+    let gameActive = true;
+    let swordSwipe; // Reference to the current sword swipe
+    
+    // Sound effects
+    let swordSound;
+    let rainSound; // Added rain background sound
+    let rainPlaying = false; // Track if rain is playing
+    let audioLoaded = false;
+    let audioListener;
+    let audioContext;
+    
+    // Physics variables
+    const airDensity = 0.005;
+    const balloonRadius = 0.5;
+    const balloonMass = 0.1;
+    const heliumLift = 0.0; // Removed helium lift - normal balloon, not helium
+    const gravity = 0.001; // Added explicit gravity constant
+    const horizontalLimit = 3; // Maximum horizontal position for the balloon
+    
+    // Wind variables
+    let windStrength = 0;
+    let windDirection = 0;
+    let windChangeTime = 0;
+    let turbulence = 0;
+    
+    // String physics
+    let stringPoints = [];
+    const stringSegments = 10; // Increased segments for smoother motion
+    const stringLength = 1.0;  // Longer string for better visibility
+    const stringStiffness = 0.3;
+    const stringDamping = 0.1; // Reduced damping for more movement
+    
+    try {
+      // Create a canvas texture for a pink, translucent cherry blossom
+      function createBlossomTexture() {
+        const size = 86;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        
+        // Draw a flower-like shape
+        const centerX = size / 2;
+        const centerY = size / 2;
+        const petalLength = size / 3;
+        const petalWidth = 3; // Wide petals
+        
+        // Draw petals with rounded tips
+        ctx.beginPath();
+        for (let i = 0; i < 5; i++) {
+          const angle = (i * Math.PI * 2) / 5;
+          
+          // Calculate petal tip position
+          const tipX = centerX + Math.cos(angle) * petalLength;
+          const tipY = centerY + Math.sin(angle) * petalLength;
+          
+          // Calculate control points for petal edges
+          const ctrl1X = centerX + Math.cos(angle + 0.3) * petalLength * petalWidth * 0.6;
+          const ctrl1Y = centerY + Math.sin(angle + 0.3) * petalLength * petalWidth * 0.6;
+          
+          const ctrl2X = centerX + Math.cos(angle - 0.3) * petalLength * petalWidth * 0.6;
+          const ctrl2Y = centerY + Math.sin(angle - 0.3) * petalLength * petalWidth * 0.6;
+          
+          // Draw petal using bezier curves for more rounded shape
+          ctx.moveTo(centerX, centerY); // Start at center
+          
+          // First edge of petal
+          ctx.quadraticCurveTo(ctrl1X, ctrl1Y, tipX, tipY);
+          
+          // Draw rounded tip using small arc
+          const tipRadius = petalLength; // Radius for the rounded tip
+          const tipAngle = 99; // Point back toward center
+          const arcStartX = tipX - Math.cos(tipAngle - 0.2) * tipRadius;
+          const arcStartY = tipY - Math.sin(tipAngle - 0.2) * tipRadius;
+          const arcEndX = tipX - Math.cos(tipAngle + 0.2) * tipRadius;
+          const arcEndY = tipY - Math.sin(tipAngle + 0.2) * tipRadius;
+          
+          // Draw the rounded tip as a small curve
+          ctx.quadraticCurveTo(
+            tipX + Math.cos(angle) * tipRadius * 0.5, 
+            tipY + Math.sin(angle) * tipRadius * 0.5,
+            arcEndX, arcEndY
+          );
+          
+          // Second edge of petal
+          ctx.quadraticCurveTo(ctrl2X, ctrl2Y, centerX, centerY);
+        }
+        
+        // Fill with gradient
+        const gradient = ctx.createRadialGradient(
+          centerX, centerY, 0,
+          centerX, centerY, petalLength
+        );
+        gradient.addColorStop(0, 'rgba(255,182,193, 0.9)'); // pink
+        gradient.addColorStop(1, 'rgba(255, 255, 255, 0.4)'); //white
+        ctx.fillStyle = gradient;
+        ctx.fill();
+        
+        // Add center
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, size/12, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255,182,193, 0.8)';
+        ctx.fill();
+        
+        return new THREE.CanvasTexture(canvas);
+      }
+      
+      // Create a canvas texture for the sword swipe
+      function createSwordSwipeTexture() {
+        const size = 1024;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        
+        // Clear canvas
+        ctx.clearRect(0, 0, size, size);
+        
+        // Draw a straight sword blade
+        const centerX = size / 2;
+        const bladeWidth = size / 16;
+        const tipLength = size * 0.4; // Length of the visible tip
+        
+        // Create gradient for the swipe
+        const gradient = ctx.createLinearGradient(
+          centerX, 0,
+          centerX, tipLength
+        );
+        gradient.addColorStop(0, 'rgba(255, 255, 255, 0.95)'); // Brighter at tip
+        gradient.addColorStop(0.7, 'rgba(255, 255, 255, 0.5)');
+        gradient.addColorStop(1, 'rgba(255, 255, 255, 0)'); // Fade at end
+        
+        // Draw the straight blade
+        ctx.fillStyle = gradient;
+        ctx.fillRect(centerX - bladeWidth/2, 0, bladeWidth, tipLength);
+        
+        // Add a subtle glow effect
+        ctx.shadowColor = 'rgba(255, 255, 255, 0.8)';
+        ctx.shadowBlur = 15;
+        ctx.fillRect(centerX - bladeWidth/2, 0, bladeWidth, tipLength);
+        
+        return new THREE.CanvasTexture(canvas);
+      }
+      
+      const blossomTexture = createBlossomTexture();
+      const swordSwipeTexture = createSwordSwipeTexture();
+
+      // Load audio effects
+      function loadAudio() {
+        // Create an audio listener
+        audioListener = new THREE.AudioListener();
+        camera.add(audioListener);
+        
+        // Store a reference to the audio context for debugging
+        audioContext = audioListener.context;
+        
+        // Log audio context state
+        console.log("Audio context initial state:", audioContext.state);
+        
+        // Create the sword sound
+        swordSound = new THREE.Audio(audioListener);
+        
+        // Create rain background sound
+        rainSound = new THREE.Audio(audioListener);
+        
+        // Log the absolute URL for debugging
+        const swordPath = 'sword.mp3';
+        const rainPath = 'rain.mp3';
+        const swordAbsoluteUrl = new URL(swordPath, window.location.href).href;
+        const rainAbsoluteUrl = new URL(rainPath, window.location.href).href;
+        
+        console.log('Attempting to load sword audio from:', swordAbsoluteUrl);
+        console.log('Attempting to load rain audio from:', rainAbsoluteUrl);
+        
+        // Load sword sound
+        const audioLoader = new THREE.AudioLoader();
+        audioLoader.load(
+          swordPath,
+          function(buffer) {
+            swordSound.setBuffer(buffer);
+            swordSound.setVolume(1.0); // Full volume for better audibility
+            audioLoaded = true;
+            console.log('Sword sound loaded successfully');
+            
+            // Try to resume audio context if it's suspended
+            if (audioContext.state === 'suspended') {
+              audioContext.resume().then(() => {
+                console.log('Audio context resumed successfully');
+                // Try playing a silent sound to unlock audio on iOS
+                const silentSound = swordSound.clone();
+                silentSound.setVolume(0.001);
+                silentSound.play();
+              }).catch(err => {
+                console.error('Failed to resume audio context:', err);
+              });
+            }
+          },
+          function(xhr) {
+            // Progress callback
+            console.log(`Sword sound loading: ${(xhr.loaded / xhr.total * 100).toFixed(0)}%`);
+          },
+          function(err) {
+            console.error('Error loading sword sound:', err);
+            
+            // Detailed error information
+            console.error('File path tried:', swordAbsoluteUrl);
+            console.error('Audio context state:', audioContext.state);
+            
+            // Try a fallback approach - using standard HTML5 Audio
+            console.log('Attempting fallback audio loading method...');
+            
+            try {
+              const fallbackAudio = new Audio(swordPath);
+              fallbackAudio.addEventListener('canplaythrough', () => {
+                console.log('Fallback audio loaded successfully');
+                
+                // Replace the play functionality
+                swordSound.play = function() {
+                  const newAudio = new Audio(swordPath);
+                  newAudio.volume = 1.0;
+                  newAudio.play().catch(e => console.error('Fallback play failed:', e));
+                  return this;
+                };
+                
+                swordSound.clone = function() {
+                  return this; // Just return self for clone requests
+                };
+                
+                audioLoaded = true;
+              });
+              
+              fallbackAudio.addEventListener('error', (e) => {
+                console.error('Fallback audio loading failed:', e);
+                alert('Could not load sword.mp3 with either method. Please check if the file exists and reload the page. Error: ' + e.message);
+              });
+              
+              // Start loading
+              fallbackAudio.load();
+            } catch (fallbackErr) {
+              console.error('Fallback audio approach failed:', fallbackErr);
+              alert('Could not load sword.mp3. Please check if the file exists in the same folder as this HTML file.');
+              audioLoaded = true; // Mark as loaded so we don't keep trying
+            }
+          }
+        );
+        
+        // Load rain sound
+        audioLoader.load(
+          rainPath,
+          function(buffer) {
+            rainSound.setBuffer(buffer);
+            rainSound.setVolume(0.4); // Lower volume for ambient sound
+            rainSound.setLoop(true); // Loop continuously
+            console.log('Rain sound loaded successfully');
+            
+            // Setup play button
+            setupRainSoundButton();
+          },
+          function(xhr) {
+            // Progress callback
+            console.log(`Rain sound loading: ${(xhr.loaded / xhr.total * 100).toFixed(0)}%`);
+          },
+          function(err) {
+            console.error('Error loading rain sound:', err);
+            
+            // Try HTML5 Audio fallback for rain sound
+            try {
+              const fallbackRain = new Audio(rainPath);
+              fallbackRain.loop = true;
+              fallbackRain.volume = 0.4;
+              
+              // Replace the play/pause functionality for rain
+              rainSound.play = function() {
+                fallbackRain.play().catch(e => console.error('Fallback rain play failed:', e));
+                rainPlaying = true;
+                return this;
+              };
+              
+              rainSound.pause = function() {
+                fallbackRain.pause();
+                rainPlaying = false;
+                return this;
+              };
+              
+              rainSound.isPlaying = function() {
+                return rainPlaying;
+              };
+              
+              // Setup play button with fallback audio
+              setupRainSoundButton();
+              
+            } catch (fallbackErr) {
+              console.error('Fallback rain audio approach failed:', fallbackErr);
+              alert('Could not load rain.mp3. Please check if the file exists in the same folder as this HTML file.');
+            }
+          }
+        );
+        
+        // Add event listeners to resume audio context on various user interactions
+        ['click', 'touchstart', 'keydown'].forEach(eventType => {
+          document.addEventListener(eventType, function resumeAudio() {
+            if (audioContext && audioContext.state === 'suspended') {
+              audioContext.resume().then(() => {
+                console.log(`Audio context resumed on ${eventType}`);
+              });
+              // Keep trying for a few interactions before removing
+              if (audioContext.state !== 'suspended') {
+                document.removeEventListener(eventType, resumeAudio);
+              }
+            }
+          });
+        });
+      }
+      
+      // Setup the rain sound button
+      function setupRainSoundButton() {
+        const playButton = document.getElementById('playMusic');
+        const playIcon = document.getElementById('playIcon');
+        
+        playButton.addEventListener('click', function() {
+          if (audioContext.state === 'suspended') {
+            audioContext.resume().then(() => {
+              toggleRainSound();
+            });
+          } else {
+            toggleRainSound();
+          }
+        });
+        
+        function toggleRainSound() {
+          if (rainSound.isPlaying()) {
+            rainSound.pause();
+            playIcon.textContent = '▶';
+            playButton.innerHTML = '<span id="playIcon">▶</span> Play Rain Sound';
+          } else {
+            rainSound.play();
+            playIcon.textContent = '❚❚';
+            playButton.innerHTML = '<span id="playIcon">❚❚</span> Pause Rain Sound';
+          }
+        }
+      }
+
+      // Initialize scene, camera, renderer, and game objects
+      function init() {
+        // Scene setup
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 5;
+
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x000000, 0);
+        document.body.appendChild(renderer.domElement);
+
+        // Load audio
+        loadAudio();
+
+        // Create the white, semi-translucent balloon
+        const balloonGeometry = new THREE.SphereGeometry(balloonRadius, 32, 32);
+        const balloonMaterial = new THREE.MeshBasicMaterial({ 
+          color: 0xffffff, 
+          transparent: true, 
+          opacity: 0.7 
+        });
+        balloon = new THREE.Mesh(balloonGeometry, balloonMaterial);
+        balloon.position.y = 0;
+        // Set initial scale
+        balloon.scale.set(1, 1, 1);
+        scene.add(balloon);
+
+        // Initialize string physics
+        initString();
+
+        // Event listeners
+        window.addEventListener('resize', onWindowResize, false);
+        window.addEventListener('click', onClick, false);
+        window.addEventListener('touchstart', onClick, false);
+
+        // Start game
+        clock.start();
+        animate();
+      }
+
+      // Initialize the balloon string with physics
+      function initString() {
+        // Remove old string if it exists
+        if (balloonString) {
+          balloon.remove(balloonString);
+        }
+        
+        // Create points for the string
+        stringPoints = [];
+        for (let i = 0; i <= stringSegments; i++) {
+          // Add slight initial curve for naturalism
+          const offsetX = Math.sin(i * 0.2) * 0.05;
+          
+          stringPoints.push(new THREE.Vector3(
+            offsetX, 
+            -balloonRadius - (i * (stringLength / stringSegments)), 
+            0
+          ));
+        }
+        
+        // Create the string geometry
+        const stringGeometry = new THREE.BufferGeometry();
+        
+        // Create the string material
+        const stringMaterial = new THREE.LineBasicMaterial({ 
+          color: 0xffffff, 
+          transparent: true, 
+          opacity: 0.5,  // Slightly more visible
+          linewidth: 1.5 // Thicker line
+        });
+        
+        // Update geometry with points
+        stringGeometry.setFromPoints(stringPoints);
+        
+        // Create line
+        balloonString = new THREE.Line(stringGeometry, stringMaterial);
+        balloon.add(balloonString);
+      }
+      
+      // Update string physics
+      function updateString(delta, time) {
+        // First point is fixed to balloon
+        stringPoints[0].set(0, -balloonRadius, 0);
+        
+        // Wind and turbulence effects for string
+        const baseWindEffect = windStrength * Math.cos(windDirection) * 0.02;
+        
+        // Update each segment except the first
+        for (let i = 1; i <= stringSegments; i++) {
+          const prev = stringPoints[i-1];
+          const curr = stringPoints[i];
+          
+          // Get segment-specific turbulence
+          const segmentTurbulence = getTurbulence(
+            curr.x + balloon.position.x,
+            curr.y + balloon.position.y, 
+            curr.z + balloon.position.z,
+            time + i * 0.5 // Different time offset for each segment
+          ) * turbulence * 0.03;
+          
+          // Calculate cascading wind effect (more effect further from balloon)
+          const segmentRatio = i / stringSegments; // 0 near balloon, 1 at end
+          const windEffect = baseWindEffect * (segmentRatio * 1.5 + 0.5) + segmentTurbulence;
+          
+          // Apply forces - more movement for segments further from the balloon
+          curr.x += windEffect * delta * 15;
+          
+          // Add some gentle oscillation for movement even in light wind
+          const oscillation = Math.sin(time * 0.8 + i * 0.4) * 0.003 * segmentRatio;
+          curr.x += oscillation;
+          
+          // Z-axis movement for 3D effect
+          curr.z += (Math.sin(time * 0.5 + i * 0.3) * 0.002 * segmentRatio);
+          
+          // Apply constraints (keep distance between points consistent)
+          const segmentLength = stringLength / stringSegments;
+          const dx = curr.x - prev.x;
+          const dy = curr.y - prev.y;
+          const dz = curr.z - prev.z;
+          const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
+          
+          if (distance > segmentLength) {
+            const correction = (distance - segmentLength) / distance;
+            
+            // Move towards previous point to maintain distance
+            curr.x -= dx * correction * stringStiffness;
+            curr.y -= dy * correction * stringStiffness;
+            curr.z -= dz * correction * stringStiffness;
+            
+            // Add some damping, less for sections further from balloon
+            curr.x *= (1 - stringDamping * delta * (1 - segmentRatio * 0.5));
+            curr.z *= (1 - stringDamping * delta * (1 - segmentRatio * 0.5));
+          }
+        }
+        
+        // Update the geometry
+        balloonString.geometry.setFromPoints(stringPoints);
+        balloonString.geometry.computeBoundingSphere();
+      }
+
+      function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      }
+
+      // Create a sword swipe animation at the specified screen coordinates
+      function createSwordSwipe(x, y) {
+        // Remove any existing sword swipe
+        if (swordSwipe) {
+          scene.remove(swordSwipe);
+        }
+        
+        // Play sword sound
+        if (audioLoaded && swordSound) {
+          // Check audio context state
+          if (audioContext.state === 'suspended') {
+            console.log('Audio context is suspended, attempting to resume...');
+            audioContext.resume().then(() => {
+              console.log('Audio context resumed');
+              playSound();
+            });
+          } else {
+            playSound();
+          }
+          
+          function playSound() {
+            try {
+              // Clone the sound to allow overlapping sounds
+              const soundInstance = swordSound.clone();
+              soundInstance.setVolume(0.8);
+              soundInstance.play();
+              console.log('Playing sword sound');
+            } catch (err) {
+              console.error('Error playing sword sound:', err);
+            }
+          }
+        } else {
+          console.warn('Sound not loaded yet or not available');
+        }
+        
+        // Create the sword swipe sprite
+        const spriteMaterial = new THREE.SpriteMaterial({ 
+          map: swordSwipeTexture, 
+          transparent: true,
+          opacity: 0.9,
+          depthTest: false // Ensure it renders on top
+        });
+        
+        swordSwipe = new THREE.Sprite(spriteMaterial);
+        
+        // Always start from bottom of screen but use x from tap
+        // Convert to normalized device coordinates
+        const vector = new THREE.Vector3(
+          (x / window.innerWidth) * 2 - 1,
+          -1, // Start at bottom of screen
+          0.5
+        );
+        
+        // Convert to world coordinates
+        vector.unproject(camera);
+        const dir = vector.sub(camera.position).normalize();
+        const distance = -camera.position.z / dir.z;
+        const pos = camera.position.clone().add(dir.multiplyScalar(distance));
+        
+        swordSwipe.position.copy(pos);
+        
+        // Size the sword swipe based on screen size
+        const scale = Math.min(window.innerWidth, window.innerHeight) / 200;
+        swordSwipe.scale.set(scale * 0.4, scale * 3, 1); // Make tall and narrow
+        
+        // Rotate so it's vertical
+        swordSwipe.material.rotation = -Math.PI / 2; // 90 degrees
+        
+        // Add to scene
+        scene.add(swordSwipe);
+        
+        // Store animation data
+        swordSwipe.userData = {
+          startTime: clock.getElapsedTime(),
+          duration: 0.2, // Faster animation
+          startPos: pos.clone(),
+          tapX: x,
+          endPos: new THREE.Vector3(pos.x, pos.y + 10, pos.z), // Move up
+          startScale: scale,
+          startOpacity: 0.9,
+          rightToLeft: Math.random() > 0.5 // Random direction
+        };
+      }
+      
+      // Update sword swipe animation
+      function updateSwordSwipe(time) {
+        if (!swordSwipe) return;
+        
+        const userData = swordSwipe.userData;
+        const elapsed = time - userData.startTime;
+        const progress = Math.min(elapsed / userData.duration, 1.0);
+        
+        if (progress >= 1.0) {
+          // Animation complete, remove the sword swipe
+          scene.remove(swordSwipe);
+          swordSwipe = null;
+          return;
+        }
+        
+        // Calculate current position - move in arc from bottom to top
+        const startX = userData.startPos.x;
+        const endX = userData.rightToLeft ? 
+            startX - (window.innerWidth / 600) : // Move left
+            startX + (window.innerWidth / 600);  // Move right
+        
+        // Move in an arc pattern
+        const curX = startX + (endX - startX) * progress;
+        const curY = userData.startPos.y + 
+            Math.sin(progress * Math.PI) * (window.innerHeight / 200); // Arc up
+        
+        swordSwipe.position.set(curX, curY, userData.startPos.z);
+        
+        // Add slight tilt during movement for dramatic effect
+        const tiltAngle = -Math.PI / 2 + (userData.rightToLeft ? -0.3 : 0.3) * Math.sin(progress * Math.PI);
+        swordSwipe.material.rotation = tiltAngle;
+        
+        // Fade out at the end
+        if (progress > 0.6) {
+          const opacity = userData.startOpacity * (1.0 - ((progress - 0.6) / 0.4));
+          swordSwipe.material.opacity = opacity;
+        }
+      }
+
+      // On each tap/click, push the balloon upward
+      function onClick(event) {
+        event.preventDefault();
+        
+        // Create sword swipe at click/tap position
+        const x = event.clientX !== undefined ? event.clientX : event.touches[0].clientX;
+        const y = event.clientY !== undefined ? event.clientY : event.touches[0].clientY;
+        createSwordSwipe(x, y);
+        
+        if (gameActive) {
+          // Add upward velocity
+          balloonVelocity += 0.05;
+          
+          // Get the tap/click position
+          let tapX = x;
+          
+          // Calculate tap position relative to balloon position in screen space
+          // Convert balloon's 3D position to screen coordinates
+          const balloonScreenPos = new THREE.Vector3();
+          balloonScreenPos.copy(balloon.position);
+          balloonScreenPos.project(camera);
+          
+          // Convert normalized device coordinates (-1 to +1) to screen pixels
+          const balloonX = (balloonScreenPos.x * 0.5 + 0.5) * window.innerWidth;
+          
+          // Direction: -1 if tap is left of balloon, +1 if tap is right of balloon
+          const isTapRightOfBalloon = tapX > balloonX;
+          
+          // Apply stronger horizontal impulse in opposite direction of tap
+          if (isTapRightOfBalloon) {
+            // Tap on right, bounce left
+            balloonXVelocity -= 0.07;
+            balloon.rotation.y = 0.3; // Tilt left
+          } else {
+            // Tap on left, bounce right
+            balloonXVelocity += 0.07;
+            balloon.rotation.y = -0.3; // Tilt right
+          }
+          
+          // Add small Z impulse for depth
+          balloonZVelocity += (Math.random() - 0.5) * 0.01;
+          
+          // Debug: Log tap positions
+          console.log(`Tap X: ${tapX}, Balloon X: ${balloonX}, Direction: ${isTapRightOfBalloon ? "Right→Left" : "Left→Right"}`);
+        } else {
+          // Restart game
+          balloonVelocity = 0;
+          balloonXVelocity = 0;
+          balloonZVelocity = 0;
+          balloon.position.y = 0;
+          balloon.position.x = 0;
+          balloon.position.z = 0;
+          balloon.rotation.y = 0; // Reset rotation
+          initString();
+          blossoms.forEach(b => scene.remove(b));
+          blossoms = [];
+          gameActive = true;
+        }
+      }
+
+      // Spawn a cherry blossom sprite with twirling motion properties
+      function spawnBlossom() {
+        const spriteMaterial = new THREE.SpriteMaterial({ 
+          map: blossomTexture, 
+          transparent: true 
+        });
+        const sprite = new THREE.Sprite(spriteMaterial);
+        
+        // Random size variation
+        const scale = 0.2 + Math.random() * 0.2;
+        sprite.scale.set(scale, scale, scale);
+        
+        // Position from top to middle of screen with varying heights and depths
+        sprite.position.x = (Math.random() - 0.5) * 8;
+        // Distribute blossoms vertically throughout the upper viewing area
+        sprite.position.y = camera.position.y + Math.random() * 8 - 2; // Some start lower down 
+        sprite.position.z = (Math.random() - 0.5) * 3;
+        
+        // Movement properties
+        sprite.userData = {
+          baseX: sprite.position.x,
+          baseZ: sprite.position.z,
+          speed: 0.0000001 + Math.random() * 0.0000002, // Almost zero falling speed
+          phase: Math.random() * Math.PI * 2,
+          phaseZ: Math.random() * Math.PI * 2,
+          amplitudeX: 1.8 + Math.random() * 2.5, // Increased horizontal sway amplitude even more
+          amplitudeZ: 1.5 + Math.random() * 1.8, // Increased depth sway amplitude
+          rotationSpeed: (Math.random() * 0.03 - 0.015) * 0.1, // Very slow rotation
+          flutter: 0.05 + Math.random() * 0.1, // Massively increased flutter effect for more hovering
+          flutterPhase: Math.random() * Math.PI * 2,
+          // Physics properties
+          mass: 0.005 + Math.random() * 0.01, // Even lighter blossoms
+          dragCoefficient: 3.0 + Math.random() * 2.0, // Extreme drag for ultra-slow movement
+          turbulenceResponse: 0.6 + Math.random() * 0.9, // Very responsive to air currents
+          // Add oscillation frequency properties for varied movement
+          oscFreqX: 0.12 + Math.random() * 0.15, // Very slow oscillation
+          oscFreqZ: 0.08 + Math.random() * 0.12, // Even slower oscillation
+          // Add hover behavior
+          hoverStrength: 0.6 + Math.random() * 0.8,
+          hoverFreq: 0.06 + Math.random() * 0.08,
+          // Almost floating
+          hasWeight: Math.random() > 0.4 // 60% of petals have some weight
+        };
+        
+        scene.add(sprite);
+        blossoms.push(sprite);
+      }
+
+      // Generate turbulence value based on Perlin-like noise
+      function getTurbulence(x, y, z, time) {
+        // Simple approach - can be replaced with actual Perlin noise if desired
+        return Math.sin(x * 0.1 + time * 0.2) * 
+               Math.cos(y * 0.1 + time * 0.3) * 
+               Math.sin(z * 0.1 + time * 0.1);
+      }
+
+      // Change wind over time
+      function updateWind(delta, time) {
+        // Gradually change wind over time
+        windChangeTime -= delta;
+        
+        if (windChangeTime <= 0) {
+          // Set a new target for wind to shift toward
+          const targetStrength = Math.random() * 2; // 0 to 2 wind strength
+          const targetDirection = Math.random() * Math.PI * 2; // 0 to 2π radians
+          
+          // Gradually move toward the target
+          windStrength += (targetStrength - windStrength) * 0.01;
+          
+          // Find shortest path to target angle (accounting for circular nature of angles)
+          let angleDiff = targetDirection - windDirection;
+          if (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+          if (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+          
+          windDirection += angleDiff * 0.01;
+          
+          // Reset change timer (5-15 seconds)
+          windChangeTime = 5 + Math.random() * 10;
+        } else {
+          // Small random fluctuations
+          windStrength += (Math.random() - 0.5) * 0.01;
+          windStrength = Math.max(0, Math.min(2, windStrength)); // Clamp between 0-2
+          
+          windDirection += (Math.random() - 0.5) * 0.02;
+        }
+        
+        // Update turbulence value
+        turbulence = 0.2 + 0.8 * Math.sin(time * 0.3) * Math.sin(time * 0.7);
+      }
+
+      // Calculate buoyancy force
+      function calculateBuoyancy() {
+        // Buoyancy force is proportional to the balloon's volume
+        const balloonVolume = (4/3) * Math.PI * Math.pow(balloonRadius, 3);
+        return heliumLift * balloonVolume; // This will be zero now
+      }
+      
+      // Calculate drag force
+      function calculateDrag(velocity, dragCoefficient = 0.5) {
+        // Drag force is proportional to the square of velocity and air density
+        return dragCoefficient * airDensity * velocity * Math.abs(velocity);
+      }
+
+      // Main animation loop
+      function animate() {
+        requestAnimationFrame(animate);
+        const delta = clock.getDelta();
+        const time = clock.getElapsedTime();
+        
+        if (gameActive) {
+          // Update sword swipe animation
+          updateSwordSwipe(time);
+          
+          // Update wind with time for more natural patterns
+          updateWind(delta, time);
+          
+          // Calculate physical forces
+          const buoyancy = calculateBuoyancy();
+          const verticalDrag = calculateDrag(balloonVelocity);
+          const horizontalDrag = calculateDrag(balloonXVelocity);
+          const depthDrag = calculateDrag(balloonZVelocity);
+          
+          // Apply gravity and buoyancy to velocity - gravity dominates now
+          balloonVelocity += (buoyancy - gravity) * delta * 20;
+          
+          // Apply drag to velocities
+          balloonVelocity -= verticalDrag * delta * 20;
+          balloonXVelocity -= horizontalDrag * delta * 20;
+          balloonZVelocity -= depthDrag * delta * 20;
+          
+          // Apply wind force to horizontal velocity
+          const windForce = windStrength * Math.cos(windDirection) * 0.0003;
+          balloonXVelocity += windForce * delta * 20;
+          
+          // Add turbulence effects
+          const localTurbulence = getTurbulence(
+            balloon.position.x, 
+            balloon.position.y, 
+            balloon.position.z, 
+            time
+          ) * turbulence;
+          
+          // Apply turbulence to all velocities
+          balloonVelocity += localTurbulence * 0.001;
+          balloonXVelocity += localTurbulence * 0.005;
+          balloonZVelocity += localTurbulence * 0.003;
+          
+          // Store the real height for tracking game over
+          const realHeight = balloon.position.y + balloonVelocity * delta * 20;
+          
+          // Instead of moving the balloon up, keep it within view and scale it to create depth illusion
+          balloon.position.y = Math.min(realHeight, 3); // Limit vertical position
+          
+          // Scale the balloon based on its height to create illusion of distance
+          const scaleFactor = Math.max(0.2, 1 - (realHeight * 0.05));
+          balloon.scale.set(scaleFactor, scaleFactor, scaleFactor);
+          
+          // Update balloon horizontal position with constraints to keep on screen
+          balloon.position.x += balloonXVelocity * delta * 20; 
+          balloon.position.z += balloonZVelocity * delta * 20;
+          
+          // Constrain balloon to stay on screen horizontally (no wrapping)
+          if (balloon.position.x > horizontalLimit) {
+            balloon.position.x = horizontalLimit;
+            balloonXVelocity *= -0.3; // Bounce softly
+          } else if (balloon.position.x < -horizontalLimit) {
+            balloon.position.x = -horizontalLimit;
+            balloonXVelocity *= -0.3; // Bounce softly
+          }
+          
+          // Add subtle balloon rotation based on movement
+          balloon.rotation.z = -balloonXVelocity * 0.5;
+          balloon.rotation.x = balloonZVelocity * 0.5;
+          
+          // Update background position for parallax effect
+          updateParallaxBackground();
+          
+          // Dampening for horizontal and depth movement
+          balloonXVelocity *= 0.99;
+          balloonZVelocity *= 0.99;
+          
+          // Limit Z depth
+          const maxDepth = 3;
+          if (balloon.position.z > maxDepth) {
+            balloon.position.z = maxDepth;
+            balloonZVelocity *= -0.5; // Bounce slightly
+          } else if (balloon.position.z < -maxDepth) {
+            balloon.position.z = -maxDepth;
+            balloonZVelocity *= -0.5; // Bounce slightly
+          }
+          
+          // Update string physics with time
+          updateString(delta, time);
+
+          // Increased spawn rate for more blossoms
+          const baseSpawnRate = 3.5; // Increased from 1.0 to 3.5
+          const spawnRate = baseSpawnRate;
+          
+          // Check for spawning blossoms with increased probability
+          if (Math.random() < spawnRate * delta) {
+            // Spawn multiple blossoms per frame (2-4)
+            const blossomCount = 2 + Math.floor(Math.random() * 3);
+            for (let b = 0; b < blossomCount; b++) {
+              spawnBlossom();
+            }
+          }
+          
+          // Limit total number of blossoms to prevent performance issues
+          const maxBlossoms = 50; // Set a reasonable maximum
+          
+          // Update each blossom's falling and twirling motion; detect collisions with the balloon
+          for (let i = blossoms.length - 1; i >= 0; i--) {
+            const blossom = blossoms[i];
+            const userData = blossom.userData;
+            
+            // Update phases for movement with custom frequencies - MUCH slower
+            userData.phase += delta * userData.oscFreqX; // Use individual frequency
+            userData.phaseZ += delta * userData.oscFreqZ; // Use individual frequency
+            userData.flutterPhase += delta * 0.03; // Further reduced for even slower flutter
+            
+            // Get local turbulence for this blossom
+            const blossomTurbulence = getTurbulence(
+              blossom.position.x, 
+              blossom.position.y, 
+              blossom.position.z, 
+              time
+            ) * turbulence * userData.turbulenceResponse;
+            
+            // Calculate all forces
+            
+            // 1. Base oscillation - sine wave movement with increased amplitude
+            const oscillationX = Math.sin(userData.phase) * userData.amplitudeX;
+            // Add secondary oscillation for more complex movement
+            const secondaryOscX = Math.sin(userData.phase * 1.3) * userData.amplitudeX * 0.3;
+            
+            // Z-axis oscillation
+            const oscillationZ = Math.sin(userData.phaseZ) * userData.amplitudeZ;
+            const secondaryOscZ = Math.cos(userData.phaseZ * 0.7) * userData.amplitudeZ * 0.4;
+            
+            // 2. Wind force - enhanced for more dramatic movement
+            const windEffect = windStrength * Math.cos(windDirection) * (1.0 / userData.mass) * 0.008 * delta;
+            
+            // Apply wind vector for more realistic wind direction
+            const windVectorX = windStrength * Math.cos(windDirection) * 0.004;
+            const windVectorZ = windStrength * Math.sin(windDirection) * 0.004;
+            
+            // 3. Turbulence - increased for more random movement
+            const turbulenceX = blossomTurbulence * 0.15;
+            const turbulenceY = blossomTurbulence * 0.12;
+            const turbulenceZ = blossomTurbulence * 0.15;
+            
+            // 4. Hovering effect - drastically increased for significant suspension
+            // Complex hover pattern combining multiple sine waves
+            const hoverEffect = 
+              Math.sin(userData.flutterPhase) * userData.flutter * 6.0 +
+              Math.cos(userData.flutterPhase * 1.3) * userData.flutter * 3.0 + 
+              Math.sin(time * userData.hoverFreq) * userData.hoverStrength * 0.015;
+            
+            // Vertical movement - guaranteed slow descent
+            let verticalMovement = 0;
+            
+            if (userData.hasWeight) {
+              // These petals fall very slowly but definitely move down
+              verticalMovement = 0.0001 * delta;
+            } else {
+              // Even "weightless" petals still descend slightly
+              verticalMovement = 0.00002 * delta;
+            }
+            
+            // Updrafts and turbulence can cause petals to rise, but not completely cancel gravity
+            // Limit upward forces to be less than gravity
+            const maxUpwardForce = verticalMovement * 0.1; // Only counteract 80% of gravity at most
+            
+            // Calculate upward forces
+            let upwardForce = 
+              (Math.random() < 0.02 ? 0.00005 * delta : 0) + // Occasional updrafts
+              (turbulenceY > 0 ? turbulenceY * 0.00001 : 0) + // Turbulence can lift
+              (hoverEffect * 0.000005); // Hover effect provides lift
+            
+            // Clamp upward force to ensure net downward movement
+            upwardForce = Math.min(upwardForce, maxUpwardForce);
+            
+            // Apply vertical movement - guaranteed to have some downward component
+            blossom.position.y -= verticalMovement - upwardForce;
+            
+            // Update positions with all forces combined
+            userData.baseX += windVectorX * delta * 10 + (Math.random() - 0.5) * 0.001; // Slower drift with tiny random motion
+            userData.baseZ += windVectorZ * delta * 10 + (Math.random() - 0.5) * 0.001; // Slower drift with tiny random motion
+            
+            // Apply complex movement pattern
+            blossom.position.x = userData.baseX + oscillationX + secondaryOscX + turbulenceX;
+            blossom.position.z = userData.baseZ + oscillationZ + secondaryOscZ + turbulenceZ;
+            
+            // Update rotation based on wind and turbulence - extremely gentle rotation
+            blossom.material.rotation += 
+              userData.rotationSpeed * delta * 0.7 + // Even slower rotation
+              (Math.abs(windEffect) * 0.01) + 
+              (blossomTurbulence * 0.005);
+
+            // Collision detection with the balloon
+            const dx = blossom.position.x - balloon.position.x;
+            const dy = blossom.position.y - balloon.position.y;
+            const dz = blossom.position.z - balloon.position.z;
+            const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            
+            if (distance < 0.6) {
+              // Physics-based impact - heavier blossoms have more effect
+              balloonVelocity -= 0.03 * userData.mass * 20;
+              
+              // Add slight horizontal force from collision
+              balloonXVelocity += dx * 0.01;
+              balloonZVelocity += dz * 0.01;
+              
+              scene.remove(blossom);
+              blossoms.splice(i, 1);
+              continue;
+            }
+
+            // Remove blossoms that have fallen below the visible area (increased distance)
+            // Now blossoms will stay on screen longer by removing them further down
+            if (blossom.position.y < camera.position.y - 12) { // Changed from -8 to -12
+              scene.remove(blossom);
+              blossoms.splice(i, 1);
+            }
+          }
+          
+          // If there are too many blossoms, remove the oldest ones
+          if (blossoms.length > maxBlossoms) {
+            const toRemove = blossoms.shift(); // Remove the oldest blossom
+            scene.remove(toRemove);
+          }
+          
+          // Game over if balloon falls too far down
+          if (realHeight < -5) {
+            gameActive = false;
+          }
+        }
+
+        renderer.render(scene, camera);
+      }
+
+      // Create function to update background position for parallax effect
+      function updateParallaxBackground() {
+        // Calculate position based on balloon position
+        // The division factor controls how much the background moves relative to the balloon
+        // Higher numbers = more subtle movement
+        const parallaxX = -(balloon.position.x / horizontalLimit) * 20; // Adjust multiplier for effect strength
+        const parallaxY = -(balloon.position.y / 3) * 10; // Vertical parallax based on balloon height
+        
+        // Apply the parallax effect to the background
+        document.body.style.backgroundPosition = `calc(50% + ${parallaxX}px) calc(50% + ${parallaxY}px)`;
+      }
+
+      init();
+    } catch (error) {
+      console.error("Game error:", error);
+      alert("An error occurred: " + error.message);
+    }
+  </script>
+</body>
+</html>
