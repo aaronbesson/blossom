@@ -546,28 +546,69 @@
           scene.remove(swordSwipe);
         }
         
-        // Play sword sound
+        // Play sword sound with extra safety checks for GitHub Pages
         if (audioLoaded && swordSound) {
-          // Check audio context state
-          if (audioContext.state === 'suspended') {
-            console.log('Audio context is suspended, attempting to resume...');
-            audioContext.resume().then(() => {
-              console.log('Audio context resumed');
-              playSound();
-            });
+          console.log("Attempting to play sword sound, audioContext state:", audioContext ? audioContext.state : "undefined");
+          
+          // Only try to play if we have a valid context
+          if (audioContext && audioContext.state !== 'closed') {
+            if (audioContext.state === 'suspended') {
+              audioContext.resume().then(() => {
+                console.log('Audio context resumed, now playing sound');
+                safePlaySound();
+              }).catch(err => {
+                console.error('Failed to resume audio context:', err);
+                // Try HTML5 Audio fallback for GitHub Pages
+                playFallbackSound();
+              });
+            } else {
+              safePlaySound();
+            }
           } else {
-            playSound();
+            // Use fallback for GitHub Pages
+            console.log("Using fallback audio (GitHub Pages compatibility)");
+            playFallbackSound();
           }
           
-          function playSound() {
+          function safePlaySound() {
             try {
-              // Clone the sound to allow overlapping sounds
-              const soundInstance = swordSound.clone();
-              soundInstance.setVolume(0.8);
-              soundInstance.play();
-              console.log('Playing sword sound');
+              // Extra safety check for GitHub Pages
+              if (typeof swordSound.context === 'undefined') {
+                console.error("Sound context is undefined (GitHub Pages issue)");
+                playFallbackSound();
+                return;
+              }
+              
+              // Create a safer sound playing mechanism
+              if (typeof swordSound.clone === 'function') {
+                try {
+                  const soundInstance = swordSound.clone();
+                  soundInstance.setVolume(0.8);
+                  soundInstance.play();
+                  console.log('Playing sword sound via Three.js');
+                } catch (err) {
+                  console.error('Error with Three.js audio:', err);
+                  playFallbackSound();
+                }
+              } else {
+                swordSound.play();
+              }
             } catch (err) {
               console.error('Error playing sword sound:', err);
+              playFallbackSound();
+            }
+          }
+          
+          // GitHub Pages audio fallback
+          function playFallbackSound() {
+            try {
+              console.log("Using direct HTML5 Audio fallback");
+              // Create and play a HTML5 Audio element directly
+              const fallbackAudio = new Audio('sword.mp3');
+              fallbackAudio.volume = 1.0;
+              fallbackAudio.play().catch(e => console.error('HTML5 Audio fallback failed:', e));
+            } catch (fbErr) {
+              console.error("All audio methods failed:", fbErr);
             }
           }
         } else {
